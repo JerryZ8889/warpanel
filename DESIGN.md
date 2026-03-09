@@ -329,7 +329,7 @@ GET  /api/history-batch/{1-3}?period=1mo    # 分批获取历史K线（每批约
 ## 文件结构
 
 ```
-panelwar/
+warpanel/
 ├── DESIGN.md              # 本设计文档
 ├── vercel.json            # Vercel 部署配置（builds + routes）
 ├── requirements.txt       # Python 依赖（fastapi/uvicorn/yfinance/httpx/akshare）
@@ -360,7 +360,7 @@ python main.py
 ```
 
 ### Vercel 部署
-- GitHub 仓库: https://github.com/JerryZ8889/panelwar.git
+- GitHub 仓库: https://github.com/JerryZ8889/warpanel.git
 - 推送到 main 分支自动部署
 - Python runtime: `@vercel/python`
 - 时间戳统一使用北京时间 (UTC+8)
