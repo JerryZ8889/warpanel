@@ -9,15 +9,16 @@
 
 - **前端**: 单页 HTML + CSS + JavaScript（无框架，轻量）
 - **后端**: Python FastAPI
-- **数据存储**: SQLite（存储历史数据用于趋势图）
+- **数据存储**: SQLite（快照缓存，保留最近5条）
 - **图表**: Chart.js（轻量级前端图表库）
 
 ---
 
 ## 数据源与指标
 
-所有市场数据通过 `yfinance` Python 库从 Yahoo Finance 获取（免费、无需API Key）。
-Polymarket 通过 Gamma API 获取（免费、无需认证）。
+- **Yahoo Finance**: 通过 `yfinance` 获取全球市场数据（免费、无需API Key）
+- **Polymarket**: 通过 Gamma API 获取停战预测概率（免费、无需认证）
+- **AKShare**: 通过 `akshare` 获取国内期货数据（集运欧线，免费）
 
 ### 核心恐慌指标
 | 指标 | 代码 | 用途 |
@@ -57,15 +58,20 @@ Polymarket 通过 Gamma API 获取（免费、无需认证）。
 | 小麦 | `ZW=F` | 能源涨价传导至化肥和运输成本，推升粮价 |
 | 玉米 | `ZC=F` | 全球粮食安全指标，油价上涨带动乙醇需求和种植成本 |
 
-### 军工 / 航运板块
+### 军工板块
 | 指标 | 代码 | 用途 |
 |------|------|------|
 | 美国军工ETF | `ITA` | iShares军工ETF，战争直接受益板块 |
 | 洛克希德·马丁 | `LMT` | 全球最大军工企业，F-35/导弹防御系统供应商 |
 | 雷神技术 | `RTX` | 导弹/防空系统制造商，冲突升级直接受益 |
 | 诺斯罗普·格鲁曼 | `NOC` | B-21轰炸机/无人机制造商 |
-| ZIM航运 | `ZIM` | 以色列航运公司，运价上涨直接受益 |
-| 干散货航运ETF | `BDRY` | 航运运价指数ETF，反映全球海运成本变化 |
+
+### 航运板块
+| 指标 | 代码/数据源 | 用途 |
+|------|------------|------|
+| ZIM航运 | `ZIM` (Yahoo Finance) | 以色列航运公司，运价上涨直接受益 |
+| 干散货航运ETF | `BDRY` (Yahoo Finance) | 航运运价指数ETF，反映全球海运成本变化 |
+| 集运欧线主力合约 | `EC0` (AKShare/新浪) | 反映亚欧航线运价预期，红海绕行和霍尔木兹海峡封锁导致运价暴涨（日K线收盘后更新，非实时） |
 
 ### 中东 / 伊朗
 | 指标 | 代码 | 用途 |
@@ -92,10 +98,6 @@ Polymarket 通过 Gamma API 获取（免费、无需认证）。
   - 事件列表: `GET https://gamma-api.polymarket.com/events?slug=us-x-iran-ceasefire-by`
   - 市场详情: `GET https://gamma-api.polymarket.com/markets?slug=<slug>`
 - **关键字段**: `outcomePrices` 数组，第一个值即 Yes 概率
-
-### 集运欧线运价（待接入）
-- **数据源**: 上海航运交易所 SCFIS 指数 / 期货行情
-- **说明**: 此数据源较难直接获取，后续对接
 
 ---
 
@@ -220,19 +222,18 @@ Polymarket 通过 Gamma API 获取（免费、无需认证）。
 ## API 设计
 
 ```
-GET  /                              # 看板页面
-GET  /api/batch/{1-5}               # 分批获取指标（每批5-6个），5分钟缓存
-GET  /api/polymarket                # 获取Polymarket停战预测，5分钟缓存
-POST /api/analyze                   # 提交合并数据，返回分析结果并存快照
-GET  /api/refresh                   # 一次性获取全部数据（本地开发用），5分钟缓存
-GET  /api/latest                    # 获取最近一次缓存数据
-GET  /api/history/{symbol}?period=1mo  # 获取某指标历史数据
-GET  /api/snapshots?limit=50           # 获取历史快照
+GET  /                                      # 看板页面（仅本地开发）
+GET  /api/batch/{1-5}                       # 分批获取指标（每批5-6个），5分钟缓存
+GET  /api/polymarket                        # 获取Polymarket停战预测，5分钟缓存
+GET  /api/ec                                # 获取集运欧线期货数据（AKShare），5分钟缓存
+POST /api/analyze                           # 提交合并数据（含EC），返回分析结果并存快照
+GET  /api/latest                            # 获取最近一次缓存数据（5分钟内有效）
+GET  /api/history-batch/{1-3}?period=1mo    # 分批获取历史K线（每批约9个指标）
 ```
 
 ### 批量分组
 
-27个指标分5个批次，避免 Vercel 10秒超时：
+#### 实时数据：27个指标分5批（/api/batch）
 
 | 批次 | 指标 |
 |------|------|
@@ -242,15 +243,27 @@ GET  /api/snapshots?limit=50           # 获取历史快照
 | Batch 4 | ZIM, BDRY, 伊朗里亚尔, 沙特ETF, 以色列ETF, 阿联酋ETF |
 | Batch 5 | 印度VIX, TIP, RINF |
 
+#### 历史K线：27个指标分3批（/api/history-batch，串行请求避免限流）
+
+| 批次 | 指标 |
+|------|------|
+| History 1 | VIX, Brent, WTI, 天然气, 黄金, 美元指数, 10Y美债, S&P500, 道琼斯 |
+| History 2 | 纳斯达克, 铜, 铝, 小麦, 玉米, 军工ETF, LMT, RTX, NOC |
+| History 3 | ZIM, BDRY, 伊朗里亚尔, 沙特ETF, 以色列ETF, 阿联酋ETF, 印度VIX, TIP, RINF |
+
+集运欧线（EC）单独通过 `/api/ec` 获取，自带近30天历史数据。
+
 ### 5分钟后端缓存机制
 
-- 所有数据获取端点（batch/polymarket/refresh/latest）共享同一缓存逻辑
+- 所有数据获取端点（batch/polymarket/ec/latest）共享同一缓存逻辑
 - 后端检查数据库最近一条快照的时间戳（北京时间）
 - **5分钟内**：直接返回缓存数据，不调用 Yahoo Finance / Polymarket，响应头 `X-Cache: HIT`
 - **超过5分钟**：正常请求外部数据源，存入新快照，响应头 `X-Cache: MISS`
 - 所有用户共享同一缓存，防止多用户同时访问导致数据源限流
 - 前端根据 `X-Cache` 响应头显示 "缓存数据 (X分X秒前获取)" 或 "最后更新: 时间"
 - `/api/latest` 同样检查5分钟有效期，过期返回 `{expired: true}`
+- `/api/analyze` 接收前端合并后的 indicators + polymarket + ec 数据，存入快照供缓存使用
+- 数据库仅保留最近5条快照，自动清理旧数据
 
 ### 页面加载流程
 
@@ -270,21 +283,23 @@ GET  /api/snapshots?limit=50           # 获取历史快照
 4. 美股指数 (标普/道指/纳指)
 5. 工业金属 (铜/铝)
 6. 粮食价格 (小麦/玉米)
-7. 军工/航运板块 (6只个股和ETF)
-8. 中东/伊朗 (里亚尔+3个中东ETF)
-9. 新兴市场风险 (印度VIX)
-10. 通胀预期 (TIP/RINF)
-11. Polymarket 停战预测 (条形图)
-12. **综合分析面板**（新）
-    - 经济体制判定徽章
+7. 军工板块 (ITA/LMT/RTX/NOC)
+8. 航运板块 (ZIM/BDRY/集运欧线EC)
+9. 中东/伊朗 (里亚尔+3个中东ETF)
+10. 新兴市场风险 (印度VIX)
+11. 通胀预期 (TIP/RINF)
+12. Polymarket 停战预测 (条形图)
+13. 综合分析面板
+    - 风险等级 + 经济体制判定徽章
     - 情景概率仪表盘 (A/B/C 三种情景及概率)
     - 关键信号列表
     - 操作建议表 (确定性方向 + 有条件方向 + 拐点交易)
     - 拐点监控高亮
-13. 集运欧线 (待接入)
 
 每个指标卡片包含：当前值、涨跌幅、迷你趋势图（近1个月日K线）、底部小字说明用途。
 所有指标（含美股三大指数）均为独立卡片，统一布局。
+集运欧线卡片动态追加到航运板块，自带迷你趋势图（近30天），标注"日K线收盘后更新，非实时"。
+错误提示使用页面内 toast 通知（替代 alert）。
 
 ## 文件结构
 
@@ -292,11 +307,11 @@ GET  /api/snapshots?limit=50           # 获取历史快照
 panelwar/
 ├── DESIGN.md              # 本设计文档
 ├── vercel.json            # Vercel 部署配置（builds + routes）
-├── requirements.txt       # Python 依赖（Vercel 构建用）
+├── requirements.txt       # Python 依赖（fastapi/uvicorn/yfinance/httpx/akshare）
 ├── .vercelignore          # Vercel 忽略文件
 ├── api/                   # 统一代码目录（Vercel serverless + 本地共用）
 │   ├── index.py           # FastAPI 入口 + 所有API端点（含5分钟缓存）
-│   ├── data_fetcher.py    # 数据获取模块（Yahoo Finance, 27个指标, 5批次）
+│   ├── data_fetcher.py    # 数据获取模块（Yahoo Finance 27指标 + AKShare EC期货）
 │   ├── polymarket.py      # Polymarket Gamma API 对接
 │   ├── analyzer.py        # 分析引擎（四层因果框架，纯规则引擎）
 │   └── database.py        # SQLite 数据库（Vercel 用 /tmp，本地用 data/）
@@ -327,10 +342,9 @@ python main.py
 
 ## 后续扩展
 
-1. 接入集运欧线运价数据（SCFIS指数）
-2. 接入 Claude API 做自然语言分析（替代/增强规则引擎）
-3. 自动定时刷新（可选）
-4. 数据导出 CSV
-5. 移动端适配
-6. CDS利差数据（需付费数据源）
-7. 密歇根消费者信心指数（FRED API，月度）
+1. 接入 Claude API 做自然语言分析（替代/增强规则引擎）
+2. 自动定时刷新（可选）
+3. 数据导出 CSV
+4. 移动端适配优化
+5. CDS利差数据（需付费数据源）
+6. 密歇根消费者信心指数（FRED API，月度）
