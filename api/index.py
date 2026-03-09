@@ -117,9 +117,15 @@ async def analyze_post(request: Request):
 @app.get("/api/latest")
 async def latest():
     snap = get_latest_snapshot()
-    if snap:
-        return JSONResponse(content=snap)
-    return JSONResponse(content={"error": "No data yet. Click refresh."}, status_code=404)
+    if snap and snap.get("timestamp"):
+        try:
+            cached_time = datetime.strptime(snap["timestamp"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BJT)
+            age = (datetime.now(BJT) - cached_time).total_seconds()
+            if age < CACHE_TTL:
+                return JSONResponse(content=snap)
+        except Exception:
+            pass
+    return JSONResponse(content={"expired": True})
 
 
 @app.get("/api/history/{symbol}")
