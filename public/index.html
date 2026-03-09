@@ -448,9 +448,23 @@ async function loadHistory(key) {
   } catch(e) {}
 }
 
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+let lastRefreshTime = 0;
+
 async function refreshData() {
   const btn = document.getElementById('btnRefresh');
   const ov = document.getElementById('loadingOverlay');
+
+  // 5分钟内使用缓存
+  const elapsed = Date.now() - lastRefreshTime;
+  if (lastRefreshTime && elapsed < CACHE_TTL) {
+    const remain = Math.ceil((CACHE_TTL - elapsed) / 1000);
+    const min = Math.floor(remain / 60);
+    const sec = remain % 60;
+    alert(`数据在 ${min}分${sec}秒 前刚刚刷新，请稍后再试`);
+    return;
+  }
+
   btn.disabled=true; btn.classList.add('loading'); btn.textContent='获取中...';
   ov.classList.remove('hidden');
   try {
@@ -480,6 +494,7 @@ async function refreshData() {
     const analyzeData = await analyzeResp.json();
     renderAnalysis(analyzeData.analysis);
 
+    lastRefreshTime = Date.now();
     document.getElementById('updateTime').textContent='最后更新: '+new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});
 
     // Step 5: Load history charts in parallel
