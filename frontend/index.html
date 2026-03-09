@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美伊局势看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Microsoft YaHei", sans-serif;
+    background: #0f1923; color: #e0e0e0; min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 24px; background: #1a2332; border-bottom: 1px solid #2a3a4a;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .header h1 { font-size: 18px; color: #fff; }
+  .header-right { display: flex; align-items: center; gap: 14px; }
+  .update-time { font-size: 12px; color: #888; }
+  .btn-refresh {
+    background: #2563eb; color: #fff; border: none;
+    padding: 7px 18px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .btn-refresh:hover { background: #1d4ed8; }
+  .btn-refresh:disabled { background: #555; cursor: not-allowed; }
+  .btn-refresh.loading { animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  /* Section */
+  .section { padding: 0 24px; margin-top: 20px; }
+  .section-title {
+    font-size: 13px; color: #6b7b8d; text-transform: uppercase;
+    letter-spacing: 2px; margin-bottom: 10px;
+    border-left: 3px solid #2563eb; padding-left: 10px;
+  }
+  .section-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+  }
+
+  /* Card */
+  .card {
+    background: #1a2332; border-radius: 8px; padding: 14px;
+    border: 1px solid #2a3a4a; transition: border-color .2s;
+  }
+  .card:hover { border-color: #3a5a7a; }
+  .card-name { font-size: 13px; color: #aaa; font-weight: 500; margin-bottom: 6px; }
+  .card-value { font-size: 24px; font-weight: 700; color: #fff; }
+  .card-change { font-size: 13px; font-weight: 500; margin-top: 2px; }
+  .card-change.up { color: #ef4444; }
+  .card-change.down { color: #22c55e; }
+  .card-desc {
+    font-size: 11px; color: #5a6a7a; margin-top: 8px; line-height: 1.5;
+    border-top: 1px solid #222e3a; padding-top: 6px;
+  }
+  .card-chart { margin-top: 8px; height: 60px; }
+  .card-full { grid-column: 1 / -1; }
+
+  /* Stocks row */
+  .stock-row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .stock-item { flex: 1; min-width: 120px; }
+  .stock-name { font-size: 12px; color: #888; }
+  .stock-val { font-size: 20px; font-weight: 700; color: #fff; }
+
+  /* Polymarket bars */
+  .pm-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 13px; }
+  .pm-label { width: 130px; flex-shrink: 0; color: #aaa; }
+  .pm-bar-bg {
+    flex: 1; height: 22px; background: #2a3a4a;
+    border-radius: 4px; overflow: hidden; position: relative;
+  }
+  .pm-bar-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+  .pm-bar-text {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    font-size: 12px; font-weight: 600; color: #fff;
+  }
+
+  /* ── Analysis Panel Styles ── */
+  .analysis-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  /* Risk + Regime badges */
+  .badge-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  }
+  .badge-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* Scenario bars */
+  .scenario-item { margin-bottom: 10px; }
+  .scenario-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .scenario-name { font-weight: 600; color: #ddd; }
+  .scenario-pct { font-weight: 700; }
+  .scenario-bar { height: 20px; background: #2a3a4a; border-radius: 4px; overflow: hidden; }
+  .scenario-fill { height: 100%; border-radius: 4px; transition: width .5s; }
+  .scenario-desc { font-size: 11px; color: #6a7a8a; margin-top: 2px; }
+
+  /* Signal list */
+  .signal-list { list-style: none; }
+  .signal-list li {
+    font-size: 13px; padding: 5px 0;
+    border-bottom: 1px solid #1e2d3d;
+    line-height: 1.5;
+  }
+  .signal-list li::before { content: "- "; color: #4a6a8a; }
+
+  /* Turning points */
+  .tp-item {
+    padding: 10px; border-radius: 6px; margin-bottom: 8px;
+    border-left: 3px solid;
+  }
+  .tp-signal { font-size: 13px; font-weight: 600; color: #fff; }
+  .tp-action { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+  /* Trade tables */
+  .trade-section { margin-bottom: 16px; }
+  .trade-section-title {
+    font-size: 12px; color: #8a9aaa; font-weight: 600;
+    margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .trade-item {
+    display: grid; grid-template-columns: 60px 1fr;
+    gap: 8px; padding: 8px; border-radius: 6px; margin-bottom: 6px;
+    background: #111b27;
+  }
+  .trade-dir {
+    font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;
+    text-align: center; align-self: start;
+  }
+  .trade-dir.long { background: #16532e; color: #4ade80; }
+  .trade-dir.short { background: #7f1d1d; color: #fca5a5; }
+  .trade-asset { font-size: 13px; font-weight: 600; color: #e0e0e0; }
+  .trade-targets { font-size: 12px; color: #8a9aaa; }
+  .trade-logic { font-size: 11px; color: #6a7a8a; margin-top: 3px; }
+  .trade-cond { font-size: 11px; color: #b45309; margin-top: 2px; }
+  .trade-exit { font-size: 11px; color: #9333ea; margin-top: 2px; }
+
+  .placeholder-text { color: #555; font-size: 13px; text-align: center; padding: 16px; }
+  .loading-overlay {
+    position: fixed; top:0; left:0; right:0; bottom:0;
+    background: rgba(15,25,35,.85); display: flex;
+    justify-content: center; align-items: center; z-index: 100; font-size: 16px;
+  }
+  .hidden { display: none !important; }
+  .footer { text-align: center; padding: 20px; color: #444; font-size: 11px; }
+
+  @media (max-width: 900px) {
+    .analysis-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 768px) {
+    .section-grid { grid-template-columns: 1fr 1fr; }
+    .card-full { grid-column: span 2; }
+  }
+  @media (max-width: 480px) {
+    .section-grid { grid-template-columns: 1fr; }
+    .card-full { grid-column: span 1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>美伊局势看板</h1>
+  <div class="header-right">
+    <span class="update-time" id="updateTime">尚未更新</span>
+    <button class="btn-refresh" id="btnRefresh" onclick="refreshData()">刷新数据</button>
+  </div>
+</div>
+
+<!-- Indicator sections -->
+<div class="section"><div class="section-title">核心恐慌指标</div><div class="section-grid" id="group-core"></div></div>
+<div class="section"><div class="section-title">能源价格</div><div class="section-grid" id="group-energy"></div></div>
+<div class="section"><div class="section-title">避险资产</div><div class="section-grid" id="group-safe_haven"></div></div>
+<div class="section">
+  <div class="section-title">美股指数</div>
+  <div class="section-grid">
+    <div class="card card-full" id="card-us_stocks">
+      <div class="stock-row" id="stock-row"></div>
+      <div class="card-desc">美股三大指数：战争引发系统性风险、能源成本飙升和滞胀预期时集体承压</div>
+    </div>
+  </div>
+</div>
+<div class="section"><div class="section-title">工业金属</div><div class="section-grid" id="group-metals"></div></div>
+<div class="section"><div class="section-title">粮食价格</div><div class="section-grid" id="group-grain"></div></div>
+<div class="section"><div class="section-title">军工 / 航运板块</div><div class="section-grid" id="group-sector"></div></div>
+<div class="section"><div class="section-title">中东 / 伊朗</div><div class="section-grid" id="group-mideast"></div></div>
+<div class="section"><div class="section-title">新兴市场风险</div><div class="section-grid" id="group-em_risk"></div></div>
+<div class="section"><div class="section-title">通胀预期</div><div class="section-grid" id="group-inflation"></div></div>
+
+<!-- Polymarket -->
+<div class="section">
+  <div class="section-title">Polymarket 停战预测</div>
+  <div class="section-grid">
+    <div class="card card-full">
+      <div id="pm-bars"><div class="placeholder-text">点击"刷新数据"加载</div></div>
+      <div class="card-desc">数据来源：Polymarket。概率 = 市场对该日期前达成停火协议的定价，快速上升可能是拐点信号</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 综合分析面板 ══════ -->
+<div class="section">
+  <div class="section-title">综合分析面板</div>
+  <div id="analysis-panel">
+    <div class="placeholder-text">点击"刷新数据"加载</div>
+  </div>
+</div>
+
+<!-- Shipping placeholder -->
+<div class="section">
+  <div class="section-title">集运欧线 (待接入)</div>
+  <div class="section-grid">
+    <div class="card card-full">
+      <div class="placeholder-text">SCFIS 指数 / 40HQ 运价 — 数据源对接中</div>
+      <div class="card-desc">上海航运交易所集运欧线指数，反映亚欧航线运价。红海绕航和霍尔木兹海峡封锁导致运价暴涨100-250%</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">数据来源：Yahoo Finance / Polymarket | 仅供参考，不构成投资建议</div>
+<div class="loading-overlay hidden" id="loadingOverlay"><span>正在获取数据...</span></div>
+
+<script>
+const charts = {};
+const CARD_GROUPS = ['core','energy','safe_haven','metals','grain','sector','mideast','em_risk','inflation'];
+const STOCK_KEYS = ['sp500','dji','nasdaq'];
+const COLORS = {
+  vix:'#ef4444',brent:'#f97316',wti:'#f59e0b',natgas:'#fb923c',
+  gold:'#eab308',usd_index:'#3b82f6',us10y:'#8b5cf6',
+  copper:'#f97316',aluminum:'#a855f7',wheat:'#84cc16',corn:'#22c55e',
+  ita:'#6366f1',lmt:'#818cf8',rtx:'#a78bfa',noc:'#c084fc',
+  zim:'#06b6d4',bdry:'#22d3ee',irr:'#f43f5e',ksa:'#e11d48',eis:'#2563eb',uae:'#0ea5e9',
+  india_vix:'#f97316',tip:'#14b8a6',rinf:'#10b981',
+};
+
+function fmt(val, unit) {
+  if (val == null) return '--';
+  if (unit === '$') return '$' + val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if (unit === '%') return val.toFixed(2) + '%';
+  if (unit === '¢') return val.toLocaleString('en-US',{maximumFractionDigits:2}) + '¢';
+  if (val > 100000) return val.toLocaleString('en-US',{maximumFractionDigits:0});
+  return val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+function chgHtml(data, key) {
+  if (data.change == null) return '<span class="card-change">--</span>';
+  const sign = data.change >= 0 ? '+' : '';
+  const arrow = data.change >= 0 ? '▲' : '▼';
+  const riskUp = ['vix','brent','wti','natgas','wheat','corn','irr','india_vix','rinf','tip'].includes(key);
+  const cls = riskUp ? (data.change>=0?'up':'down') : (data.change>=0?'down':'up');
+  return `<span class="card-change ${cls}">${arrow} ${sign}${data.change} (${sign}${data.change_pct}%)</span>`;
+}
+
+function buildCard(key, data) {
+  return `<div class="card" id="card-${key}">
+    <div class="card-name">${data.name||key}</div>
+    <div class="card-value" id="val-${key}">${fmt(data.value,data.unit)}</div>
+    <div id="chg-${key}">${chgHtml(data,key)}</div>
+    <div class="card-chart"><canvas id="chart-${key}"></canvas></div>
+    <div class="card-desc">${data.desc||''}</div>
+  </div>`;
+}
+
+function renderIndicators(indicators) {
+  const grouped = {};
+  for (const [key, data] of Object.entries(indicators)) {
+    const g = data.group;
+    if (!grouped[g]) grouped[g] = [];
+    grouped[g].push([key, data]);
+  }
+  for (const gid of CARD_GROUPS) {
+    const c = document.getElementById('group-'+gid);
+    if (!c || !grouped[gid]) continue;
+    c.innerHTML = grouped[gid].map(([k,d]) => buildCard(k,d)).join('');
+  }
+  const sr = document.getElementById('stock-row');
+  if (sr && grouped['us_stocks']) {
+    sr.innerHTML = grouped['us_stocks'].map(([k,d]) => `
+      <div class="stock-item">
+        <div class="stock-name">${d.name}</div>
+        <div class="stock-val">${fmt(d.value,d.unit)}</div>
+        <div>${chgHtml(d,k)}</div>
+      </div>`).join('');
+  }
+}
+
+function renderMiniChart(cid, hist, color) {
+  const cv = document.getElementById(cid);
+  if (!cv || !hist || !hist.length) return;
+  if (charts[cid]) charts[cid].destroy();
+  charts[cid] = new Chart(cv.getContext('2d'), {
+    type:'line',
+    data:{labels:hist.map(d=>d.date),datasets:[{data:hist.map(d=>d.close),borderColor:color,backgroundColor:color+'20',fill:true,borderWidth:1.5,pointRadius:0,tension:.3}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}
+  });
+}
+
+function renderPolymarket(pm) {
+  const c = document.getElementById('pm-bars');
+  if (!pm||!pm.length) { c.innerHTML='<div class="placeholder-text">无法获取数据</div>'; return; }
+  const mm={march:'3月',april:'4月',may:'5月',june:'6月',july:'7月',august:'8月'};
+  c.innerHTML = pm.map(it => {
+    const p = it.probability??0;
+    let lb = it.question||it.slug;
+    const m = lb.match(/(march|april|may|june|july|august)\s*(\d+)/i)||it.slug.match(/(march|april|may|june|july|august)-(\d+)/i);
+    if (m) lb = (mm[m[1].toLowerCase()]||m[1])+m[2]+'日前';
+    const cl = p<20?'#ef4444':p<40?'#f97316':p<60?'#eab308':'#22c55e';
+    return `<div class="pm-row"><span class="pm-label">${lb}</span><div class="pm-bar-bg"><div class="pm-bar-fill" style="width:${p}%;background:${cl}"></div><span class="pm-bar-text">${p}%</span></div></div>`;
+  }).join('');
+}
+
+// ══════ Render Analysis Panel ══════
+function renderAnalysis(a) {
+  const panel = document.getElementById('analysis-panel');
+  if (!a || !a.risk) { panel.innerHTML='<div class="placeholder-text">无数据</div>'; return; }
+
+  let html = '';
+
+  // ── Row 1: Risk + Regime badges ──
+  html += `<div class="badge-row">
+    <span class="badge" style="background:${a.risk.color}22;color:${a.risk.color}">
+      <span class="badge-dot" style="background:${a.risk.color}"></span>
+      风险等级：${a.risk.text}
+    </span>
+    <span class="badge" style="background:${a.regime.color}22;color:${a.regime.color}">
+      <span class="badge-dot" style="background:${a.regime.color}"></span>
+      经济体制：${a.regime.label}
+    </span>
+  </div>
+  <div style="font-size:12px;color:#7a8a9a;margin-bottom:16px;">${a.regime.desc}</div>`;
+
+  html += '<div class="analysis-grid">';
+
+  // ── Left column: Scenarios + Signals ──
+  html += '<div>';
+
+  // Scenarios
+  html += '<div class="card" style="margin-bottom:12px"><div class="card-name">情景概率推演</div>';
+  for (const s of a.scenarios) {
+    html += `<div class="scenario-item">
+      <div class="scenario-header">
+        <span class="scenario-name">${s.id}. ${s.name}</span>
+        <span class="scenario-pct" style="color:${s.color}">${s.probability}%</span>
+      </div>
+      <div class="scenario-bar"><div class="scenario-fill" style="width:${s.probability}%;background:${s.color}"></div></div>
+      <div class="scenario-desc">${s.desc}</div>
+    </div>`;
+  }
+  html += '</div>';
+
+  // Signals
+  html += '<div class="card"><div class="card-name">关键市场信号</div>';
+  if (a.signals && a.signals.length) {
+    html += '<ul class="signal-list">' + a.signals.map(s => `<li>${s}</li>`).join('') + '</ul>';
+  } else {
+    html += '<div class="placeholder-text">暂无显著信号</div>';
+  }
+  html += '</div>';
+
+  html += '</div>'; // end left
+
+  // ── Right column: Turning Points + Trades ──
+  html += '<div>';
+
+  // Turning points
+  if (a.turning_points && a.turning_points.length) {
+    html += '<div class="card" style="margin-bottom:12px"><div class="card-name">拐点监控</div>';
+    for (const tp of a.turning_points) {
+      html += `<div class="tp-item" style="border-color:${tp.color};background:${tp.color}11">
+        <div class="tp-signal">${tp.signal}</div>
+        <div class="tp-action">${tp.action}</div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Trades
+  html += '<div class="card"><div class="card-name">操作建议</div>';
+
+  if (a.trades.contrarian && a.trades.contrarian.length) {
+    html += '<div class="trade-section"><div class="trade-section-title">拐点交易（高赔率）</div>';
+    for (const t of a.trades.contrarian) {
+      html += `<div class="trade-item">
+        <span class="trade-dir ${t.direction}">${t.direction==='long'?'做多':'做空'}</span>
+        <div>
+          <div class="trade-asset">${t.asset}</div>
+          <div class="trade-targets">${t.targets}</div>
+          <div class="trade-cond">触发：${t.trigger}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (a.trades.confident && a.trades.confident.length) {
+    html += '<div class="trade-section"><div class="trade-section-title">确定性方向</div>';
+    for (const t of a.trades.confident) {
+      html += `<div class="trade-item">
+        <span class="trade-dir ${t.direction}">${t.direction==='long'?'做多':'做空'}</span>
+        <div>
+          <div class="trade-asset">${t.asset}</div>
+          <div class="trade-targets">${t.targets}</div>
+          <div class="trade-logic">${t.logic}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (a.trades.conditional && a.trades.conditional.length) {
+    html += '<div class="trade-section"><div class="trade-section-title">有条件方向</div>';
+    for (const t of a.trades.conditional) {
+      html += `<div class="trade-item">
+        <span class="trade-dir ${t.direction}">${t.direction==='long'?'做多':'做空'}</span>
+        <div>
+          <div class="trade-asset">${t.asset}</div>
+          <div class="trade-targets">${t.targets}</div>
+          <div class="trade-cond">条件：${t.condition}</div>
+          <div class="trade-exit">止损：${t.exit}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>'; // end trades card
+  html += '</div>'; // end right
+  html += '</div>'; // end analysis-grid
+
+  panel.innerHTML = html;
+}
+
+async function loadHistory(key) {
+  try {
+    const r = await fetch('/api/history/'+key+'?period=1mo');
+    if (r.ok) renderMiniChart('chart-'+key, await r.json(), COLORS[key]||'#60a5fa');
+  } catch(e) {}
+}
+
+async function refreshData() {
+  const btn = document.getElementById('btnRefresh');
+  const ov = document.getElementById('loadingOverlay');
+  btn.disabled=true; btn.classList.add('loading'); btn.textContent='获取中...';
+  ov.classList.remove('hidden');
+  try {
+    const r = await fetch('/api/refresh');
+    if (!r.ok) throw new Error('Failed');
+    const data = await r.json();
+    renderIndicators(data.indicators||{});
+    renderPolymarket(data.polymarket);
+    renderAnalysis(data.analysis);
+    document.getElementById('updateTime').textContent='最后更新: '+new Date().toLocaleString('zh-CN');
+    const ks = Object.keys(data.indicators||{}).filter(k=>!STOCK_KEYS.includes(k));
+    await Promise.all(ks.map(k=>loadHistory(k)));
+  } catch(e) { alert('数据获取失败: '+e.message); }
+  finally { btn.disabled=false; btn.classList.remove('loading'); btn.textContent='刷新数据'; ov.classList.add('hidden'); }
+}
+
+(async()=>{
+  try {
+    const r = await fetch('/api/latest');
+    if (r.ok) {
+      const s = await r.json(); const d = s.data||s;
+      if (d.indicators) renderIndicators(d.indicators);
+      renderPolymarket(d.polymarket);
+      renderAnalysis(d.analysis);
+      document.getElementById('updateTime').textContent='缓存: '+(s.timestamp||'--');
+    }
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>
