@@ -220,12 +220,36 @@ Polymarket 通过 Gamma API 获取（免费、无需认证）。
 ## API 设计
 
 ```
-GET /              # 看板页面
-GET /api/refresh   # 刷新所有数据（拉取+存储+分析）
-GET /api/latest    # 获取最近一次缓存数据
-GET /api/history/{symbol}?period=1mo  # 获取某指标历史数据
-GET /api/snapshots?limit=50           # 获取历史快照
+GET  /                              # 看板页面
+GET  /api/batch/{1-5}               # 分批获取指标（每批5-6个），5分钟缓存
+GET  /api/polymarket                # 获取Polymarket停战预测，5分钟缓存
+POST /api/analyze                   # 提交合并数据，返回分析结果并存快照
+GET  /api/refresh                   # 一次性获取全部数据（本地开发用），5分钟缓存
+GET  /api/latest                    # 获取最近一次缓存数据
+GET  /api/history/{symbol}?period=1mo  # 获取某指标历史数据
+GET  /api/snapshots?limit=50           # 获取历史快照
 ```
+
+### 批量分组
+
+27个指标分5个批次，避免 Vercel 10秒超时：
+
+| 批次 | 指标 |
+|------|------|
+| Batch 1 | VIX, Brent, WTI, 天然气, 黄金, 美元指数 |
+| Batch 2 | 10Y美债, S&P500, 道琼斯, 纳斯达克, 铜, 铝 |
+| Batch 3 | 小麦, 玉米, 军工ETF, LMT, RTX, NOC |
+| Batch 4 | ZIM, BDRY, 伊朗里亚尔, 沙特ETF, 以色列ETF, 阿联酋ETF |
+| Batch 5 | 印度VIX, TIP, RINF |
+
+### 5分钟后端缓存机制
+
+- 所有数据获取端点（batch/polymarket/refresh）共享同一缓存逻辑
+- 后端检查数据库最近一条快照的时间戳（北京时间）
+- **5分钟内**：直接返回缓存数据，不调用 Yahoo Finance / Polymarket，响应头 `X-Cache: HIT`
+- **超过5分钟**：正常请求外部数据源，存入新快照，响应头 `X-Cache: MISS`
+- 所有用户共享同一缓存，防止多用户同时访问导致数据源限流
+- 前端根据 `X-Cache` 响应头显示 "缓存数据 (X分X秒前获取)" 或 "最后更新: 时间"
 
 ## 前端布局
 
@@ -255,30 +279,41 @@ GET /api/snapshots?limit=50           # 获取历史快照
 ## 文件结构
 
 ```
-９ panel/
+panelwar/
 ├── DESIGN.md              # 本设计文档
-├── backend/
-│   ├── main.py            # FastAPI 主入口
-│   ├── data_fetcher.py    # 数据获取模块（Yahoo Finance, 27个指标）
-│   ├── polymarket.py      # Polymarket API 对接
-│   ├── analyzer.py        # 分析引擎（四层因果框架）
-│   ├── database.py        # SQLite 数据库操作
-│   └── requirements.txt   # Python 依赖
-├── frontend/
+├── vercel.json            # Vercel 部署配置（builds + routes）
+├── requirements.txt       # Python 依赖（Vercel 构建用）
+├── .vercelignore          # Vercel 忽略文件
+├── api/                   # 统一代码目录（Vercel serverless + 本地共用）
+│   ├── index.py           # FastAPI 入口 + 所有API端点（含5分钟缓存）
+│   ├── data_fetcher.py    # 数据获取模块（Yahoo Finance, 27个指标, 5批次）
+│   ├── polymarket.py      # Polymarket Gamma API 对接
+│   ├── analyzer.py        # 分析引擎（四层因果框架，纯规则引擎）
+│   └── database.py        # SQLite 数据库（Vercel 用 /tmp，本地用 data/）
+├── public/
 │   └── index.html         # 单页看板（HTML+CSS+JS 内联）
+├── backend/
+│   └── main.py            # 本地开发入口（import from api/）
 └── data/
     └── panel.db           # SQLite 数据库文件（自动创建）
 ```
 
 ## 启动方式
 
+### 本地开发
 ```bash
-cd backend
 pip install -r requirements.txt
+cd backend
 python main.py
 # 浏览器打开 http://localhost:8000
 # 局域网访问 http://192.168.x.x:8000（需放行防火墙8000端口）
 ```
+
+### Vercel 部署
+- GitHub 仓库: https://github.com/JerryZ8889/panelwar.git
+- 推送到 main 分支自动部署
+- Python runtime: `@vercel/python`
+- 时间戳统一使用北京时间 (UTC+8)
 
 ## 后续扩展
 
