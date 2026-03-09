@@ -40,6 +40,9 @@ def save_snapshot(data: dict):
             "INSERT INTO snapshots (timestamp, data) VALUES (?, ?)",
             (datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S"), json.dumps(data, ensure_ascii=False)),
         )
+        conn.execute(
+            "DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT 5)"
+        )
         conn.commit()
         conn.close()
     except Exception:
@@ -58,22 +61,6 @@ def get_latest_snapshot() -> dict | None:
     except Exception:
         pass
     return None
-
-
-def get_history(limit: int = 100) -> list[dict]:
-    try:
-        conn = get_conn()
-        rows = conn.execute(
-            "SELECT timestamp, data FROM snapshots ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-        conn.close()
-        results = []
-        for row in rows:
-            results.append({"timestamp": row["timestamp"], "data": json.loads(row["data"])})
-        results.reverse()
-        return results
-    except Exception:
-        return []
 
 
 init_db()

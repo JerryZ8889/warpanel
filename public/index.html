@@ -140,6 +140,13 @@
   .trade-cond { font-size: 11px; color: #b45309; margin-top: 2px; }
   .trade-exit { font-size: 11px; color: #9333ea; margin-top: 2px; }
 
+  .toast {
+    position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+    background: #7f1d1d; color: #fca5a5; padding: 10px 24px; border-radius: 8px;
+    font-size: 13px; z-index: 200; opacity: 0; transition: opacity .3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; pointer-events: auto; }
   .placeholder-text { color: #555; font-size: 13px; text-align: center; padding: 16px; }
   .loading-overlay {
     position: fixed; top:0; left:0; right:0; bottom:0;
@@ -179,7 +186,8 @@
 <div class="section"><div class="section-title">美股指数</div><div class="section-grid" id="group-us_stocks"></div></div>
 <div class="section"><div class="section-title">工业金属</div><div class="section-grid" id="group-metals"></div></div>
 <div class="section"><div class="section-title">粮食价格</div><div class="section-grid" id="group-grain"></div></div>
-<div class="section"><div class="section-title">军工 / 航运板块</div><div class="section-grid" id="group-sector"></div></div>
+<div class="section"><div class="section-title">军工板块</div><div class="section-grid" id="group-defense"></div></div>
+<div class="section"><div class="section-title">航运板块</div><div class="section-grid" id="group-shipping"></div></div>
 <div class="section"><div class="section-title">中东 / 伊朗</div><div class="section-grid" id="group-mideast"></div></div>
 <div class="section"><div class="section-title">新兴市场风险</div><div class="section-grid" id="group-em_risk"></div></div>
 <div class="section"><div class="section-title">通胀预期</div><div class="section-grid" id="group-inflation"></div></div>
@@ -203,23 +211,23 @@
   </div>
 </div>
 
-<!-- Shipping placeholder -->
-<div class="section">
-  <div class="section-title">集运欧线 (待接入)</div>
-  <div class="section-grid">
-    <div class="card card-full">
-      <div class="placeholder-text">集运指数（欧线）期货 EC主力合约 — 数据源对接中</div>
-      <div class="card-desc">上海国际能源交易中心集运欧线期货，反映亚欧航线运价预期。红海绕航和霍尔木兹海峡封锁导致运价暴涨<br>（数据来源：AKShare / 新浪财经，日K线收盘后更新，非实时）</div>
-    </div>
-  </div>
-</div>
 
-<div class="footer">数据来源：Yahoo Finance / Polymarket | 仅供参考，不构成投资建议</div>
+<div class="footer">数据来源：Yahoo Finance / Polymarket / AKShare | 仅供参考，不构成投资建议</div>
+<div class="toast" id="toast"></div>
 <div class="loading-overlay hidden" id="loadingOverlay"><span>正在获取数据...</span></div>
 
 <script>
+let toastTimer;
+function showToast(msg, duration=4000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
 const charts = {};
-const CARD_GROUPS = ['core','energy','safe_haven','us_stocks','metals','grain','sector','mideast','em_risk','inflation'];
+const CARD_GROUPS = ['core','energy','safe_haven','us_stocks','metals','grain','defense','shipping','mideast','em_risk','inflation'];
 const COLORS = {
   vix:'#ef4444',brent:'#f97316',wti:'#f59e0b',natgas:'#fb923c',
   gold:'#eab308',usd_index:'#3b82f6',us10y:'#8b5cf6',sp500:'#6366f1',dji:'#818cf8',nasdaq:'#a78bfa',
@@ -427,11 +435,48 @@ function renderAnalysis(a) {
   panel.innerHTML = html;
 }
 
-async function loadHistory(key) {
-  try {
-    const r = await fetch('/api/history/'+key+'?period=1mo');
-    if (r.ok) renderMiniChart('chart-'+key, await r.json(), COLORS[key]||'#60a5fa');
-  } catch(e) {}
+function renderEC(ec) {
+  // Remove old EC card if exists, then append to shipping grid
+  const old = document.getElementById('card-ec');
+  if (old) old.remove();
+  const grid = document.getElementById('group-shipping');
+  if (!grid) return;
+
+  const val = (!ec || ec.value == null) ? (ec && ec.error ? '获取失败' : '--') : ec.value.toLocaleString('en-US', {minimumFractionDigits:1, maximumFractionDigits:1});
+  let chgHtml = '<span class="card-change">--</span>';
+  if (ec && ec.change != null) {
+    const sign = ec.change >= 0 ? '+' : '';
+    const arrow = ec.change >= 0 ? '▲' : '▼';
+    const cls = ec.change >= 0 ? 'up' : 'down';
+    chgHtml = `<span class="card-change ${cls}">${arrow} ${sign}${ec.change} (${sign}${ec.change_pct}%)</span>`;
+  }
+
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.id = 'card-ec';
+  div.innerHTML = `<div class="card-name">集运欧线主力合约</div>
+    <div class="card-value">${val}</div>
+    <div>${chgHtml}</div>
+    <div class="card-chart"><canvas id="chart-ec"></canvas></div>
+    <div class="card-desc">反映亚欧航线运价预期，红海绕行和霍尔木兹海峡封锁导致运价暴涨<br><span style="color:#f59e0b">（日K线收盘后更新，非实时）</span></div>`;
+  grid.appendChild(div);
+
+  if (ec && ec.history && ec.history.length) {
+    renderMiniChart('chart-ec', ec.history, '#f97316');
+  }
+}
+
+async function loadAllHistory() {
+  for (let id = 1; id <= 3; id++) {
+    try {
+      const r = await fetch('/api/history-batch/'+id+'?period=1mo');
+      if (!r.ok) continue;
+      const data = await r.json();
+      for (const [key, hist] of Object.entries(data)) {
+        if (hist && hist.length) renderMiniChart('chart-'+key, hist, COLORS[key]||'#60a5fa');
+      }
+    } catch(e) {}
+  }
 }
 
 async function refreshData() {
@@ -440,7 +485,7 @@ async function refreshData() {
   btn.disabled=true; btn.classList.add('loading'); btn.textContent='获取中...';
   ov.classList.remove('hidden');
   try {
-    // Step 1: Fetch 5 batches + polymarket in parallel
+    // Step 1: Fetch 5 batches + polymarket + EC in parallel
     const results = await Promise.all([
       fetch('/api/batch/1'),
       fetch('/api/batch/2'),
@@ -448,23 +493,25 @@ async function refreshData() {
       fetch('/api/batch/4'),
       fetch('/api/batch/5'),
       fetch('/api/polymarket'),
+      fetch('/api/ec'),
     ]);
     const isCache = results[0].headers.get('X-Cache') === 'HIT';
     const cacheAge = results[0].headers.get('X-Cache-Age');
-    const [b1,b2,b3,b4,b5,pm] = await Promise.all(results.map(r=>r.json()));
+    const [b1,b2,b3,b4,b5,pm,ec] = await Promise.all(results.map(r=>r.json()));
 
     // Step 2: Merge all indicators
     const allIndicators = {...b1,...b2,...b3,...b4,...b5};
 
-    // Step 3: Render indicators + polymarket immediately
+    // Step 3: Render indicators + polymarket + EC immediately
     renderIndicators(allIndicators);
     renderPolymarket(pm);
+    renderEC(ec);
 
-    // Step 4: Send merged data to analyze endpoint
+    // Step 4: Send merged data to analyze endpoint (include EC for caching)
     const analyzeResp = await fetch('/api/analyze', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({indicators: allIndicators, polymarket: pm}),
+      body: JSON.stringify({indicators: allIndicators, polymarket: pm, ec: ec}),
     });
     const analyzeData = await analyzeResp.json();
     renderAnalysis(analyzeData.analysis);
@@ -477,10 +524,9 @@ async function refreshData() {
       document.getElementById('updateTime').textContent='最后更新: '+timeStr;
     }
 
-    // Step 5: Load history charts in parallel
-    const ks = Object.keys(allIndicators);
-    await Promise.all(ks.map(k=>loadHistory(k)));
-  } catch(e) { alert('数据获取失败: '+e.message); }
+    // Step 5: Load history charts in 3 batch requests
+    await loadAllHistory();
+  } catch(e) { showToast('数据获取失败: '+e.message); }
   finally { btn.disabled=false; btn.classList.remove('loading'); btn.textContent='刷新数据'; ov.classList.add('hidden'); }
 }
 
@@ -496,6 +542,8 @@ async function refreshData() {
           renderIndicators(d.indicators);
           renderPolymarket(d.polymarket);
           renderAnalysis(d.analysis);
+          try { const ecR = await fetch('/api/ec'); if (ecR.ok) renderEC(await ecR.json()); } catch(e) {}
+          await loadAllHistory();
           document.getElementById('updateTime').textContent='缓存: '+(s.timestamp||'--')+' (北京时间)';
           loaded = true;
         }

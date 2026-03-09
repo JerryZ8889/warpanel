@@ -8,10 +8,10 @@ from fastapi.responses import FileResponse, JSONResponse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
-from data_fetcher import fetch_market_data, fetch_batch, fetch_history, BATCHES
+from data_fetcher import fetch_batch, fetch_history_batch, fetch_ec_futures, BATCHES, HISTORY_BATCHES
 from polymarket import fetch_ceasefire_predictions
 from analyzer import analyze
-from database import save_snapshot, get_latest_snapshot, get_history as get_db_history
+from database import save_snapshot, get_latest_snapshot
 
 CACHE_TTL = 5 * 60
 BJT = timezone(timedelta(hours=8))
@@ -51,7 +51,7 @@ async def batch(batch_id: int):
         batch_data = {k: cached[k] for k in keys if k in cached}
         if batch_data:
             return JSONResponse(content=batch_data, headers={"X-Cache": "HIT", "X-Cache-Age": str(age)})
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     data = await loop.run_in_executor(None, fetch_batch, batch_id)
     return JSONResponse(content=data, headers={"X-Cache": "MISS"})
 
@@ -65,34 +65,33 @@ async def polymarket():
     return JSONResponse(content=data, headers={"X-Cache": "MISS"})
 
 
+@app.get("/api/ec")
+async def ec_futures():
+    """Fetch EC futures data, with 5-min cache."""
+    snap, age = _check_cache()
+    if snap and snap["data"].get("ec"):
+        return JSONResponse(content=snap["data"]["ec"], headers={"X-Cache": "HIT", "X-Cache-Age": str(age)})
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, fetch_ec_futures)
+    return JSONResponse(content=data, headers={"X-Cache": "MISS"})
+
+
 @app.post("/api/analyze")
 async def analyze_post(request: Request):
     body = await request.json()
     indicators = body.get("indicators", {})
     polymarket_data = body.get("polymarket", [])
+    ec_data = body.get("ec")
     analysis = analyze(indicators, polymarket_data)
     snapshot = {
         "indicators": indicators,
         "polymarket": polymarket_data,
         "analysis": analysis,
     }
+    if ec_data:
+        snapshot["ec"] = ec_data
     save_snapshot(snapshot)
     return JSONResponse(content={"analysis": analysis})
-
-
-@app.get("/api/refresh")
-async def refresh():
-    loop = asyncio.get_event_loop()
-    market_data = await loop.run_in_executor(None, fetch_market_data)
-    polymarket_data = await fetch_ceasefire_predictions()
-    analysis = analyze(market_data, polymarket_data)
-    snapshot = {
-        "indicators": market_data,
-        "polymarket": polymarket_data,
-        "analysis": analysis,
-    }
-    save_snapshot(snapshot)
-    return JSONResponse(content=snapshot)
 
 
 @app.get("/api/latest")
@@ -109,17 +108,16 @@ async def latest():
     return JSONResponse(content={"expired": True})
 
 
-@app.get("/api/history/{symbol}")
-async def history(symbol: str, period: str = "1mo"):
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(None, fetch_history, symbol, period)
+@app.get("/api/history-batch/{batch_id}")
+async def history_batch(batch_id: int, period: str = "1mo"):
+    if batch_id < 1 or batch_id > 3:
+        return JSONResponse(content={"error": "batch_id must be 1-3"}, status_code=400)
+    keys = HISTORY_BATCHES.get(batch_id, [])
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, fetch_history_batch, keys, period)
     return JSONResponse(content=data)
 
 
-@app.get("/api/snapshots")
-async def snapshots(limit: int = 50):
-    data = get_db_history(limit)
-    return JSONResponse(content=data)
 
 
 if __name__ == "__main__":

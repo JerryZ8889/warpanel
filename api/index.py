@@ -2,15 +2,15 @@ import os
 import sys
 import asyncio
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from data_fetcher import fetch_market_data, fetch_batch, fetch_history
+from data_fetcher import fetch_batch, fetch_history_batch, fetch_ec_futures, BATCHES, HISTORY_BATCHES
 from polymarket import fetch_ceasefire_predictions
 from analyzer import analyze
-from database import save_snapshot, get_latest_snapshot, get_history as get_db_history
+from database import save_snapshot, get_latest_snapshot
 
 app = FastAPI()
 
@@ -33,8 +33,6 @@ async def batch(batch_id: int):
             cached_time = datetime.strptime(snap["timestamp"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BJT)
             age = (datetime.now(BJT) - cached_time).total_seconds()
             if age < CACHE_TTL and snap.get("data", {}).get("indicators"):
-                # Return cached batch subset
-                from data_fetcher import BATCHES
                 keys = BATCHES.get(batch_id, [])
                 cached_indicators = snap["data"]["indicators"]
                 batch_data = {k: cached_indicators[k] for k in keys if k in cached_indicators}
@@ -43,7 +41,7 @@ async def batch(batch_id: int):
         except Exception:
             pass
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     data = await loop.run_in_executor(None, fetch_batch, batch_id)
     return JSONResponse(content=data, headers={"X-Cache": "MISS"})
 
@@ -65,38 +63,22 @@ async def polymarket():
     return JSONResponse(content=data, headers={"X-Cache": "MISS"})
 
 
-@app.get("/api/refresh")
-async def refresh():
-    """Full refresh - respects 5-min cache."""
+@app.get("/api/ec")
+async def ec_futures():
+    """Fetch EC futures data, with 5-min cache."""
     snap = get_latest_snapshot()
     if snap and snap.get("timestamp"):
         try:
             cached_time = datetime.strptime(snap["timestamp"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BJT)
             age = (datetime.now(BJT) - cached_time).total_seconds()
-            if age < CACHE_TTL and snap.get("data"):
-                result = snap["data"]
-                result["cached"] = True
-                result["cache_age"] = int(age)
-                return JSONResponse(content=result)
+            if age < CACHE_TTL and snap.get("data", {}).get("ec"):
+                return JSONResponse(content=snap["data"]["ec"], headers={"X-Cache": "HIT", "X-Cache-Age": str(int(age))})
         except Exception:
             pass
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, fetch_ec_futures)
+    return JSONResponse(content=data, headers={"X-Cache": "MISS"})
 
-    loop = asyncio.get_event_loop()
-    market_data = await loop.run_in_executor(None, fetch_market_data)
-    polymarket_data = await fetch_ceasefire_predictions()
-    analysis = analyze(market_data, polymarket_data)
-    snapshot = {
-        "indicators": market_data,
-        "polymarket": polymarket_data,
-        "analysis": analysis,
-    }
-    save_snapshot(snapshot)
-    return JSONResponse(content=snapshot)
-
-
-# ── Analysis via POST (frontend sends merged data) ──
-
-from fastapi import Request
 
 @app.post("/api/analyze")
 async def analyze_post(request: Request):
@@ -104,12 +86,15 @@ async def analyze_post(request: Request):
     body = await request.json()
     indicators = body.get("indicators", {})
     polymarket_data = body.get("polymarket", [])
+    ec_data = body.get("ec")
     analysis = analyze(indicators, polymarket_data)
     snapshot = {
         "indicators": indicators,
         "polymarket": polymarket_data,
         "analysis": analysis,
     }
+    if ec_data:
+        snapshot["ec"] = ec_data
     save_snapshot(snapshot)
     return JSONResponse(content={"analysis": analysis})
 
@@ -128,14 +113,13 @@ async def latest():
     return JSONResponse(content={"expired": True})
 
 
-@app.get("/api/history/{symbol}")
-async def history(symbol: str, period: str = "1mo"):
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(None, fetch_history, symbol, period)
+@app.get("/api/history-batch/{batch_id}")
+async def history_batch(batch_id: int, period: str = "1mo"):
+    if batch_id < 1 or batch_id > 3:
+        return JSONResponse(content={"error": "batch_id must be 1-3"}, status_code=400)
+    keys = HISTORY_BATCHES.get(batch_id, [])
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, fetch_history_batch, keys, period)
     return JSONResponse(content=data)
 
 
-@app.get("/api/snapshots")
-async def snapshots(limit: int = 50):
-    data = get_db_history(limit)
-    return JSONResponse(content=data)
