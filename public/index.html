@@ -286,6 +286,16 @@ function renderPolymarket(pm) {
   const c = document.getElementById('pm-bars');
   if (!pm||!pm.length) { c.innerHTML='<div class="placeholder-text">无法获取数据</div>'; return; }
   const mm={march:'3月',april:'4月',may:'5月',june:'6月',july:'7月',august:'8月'};
+  const monthNum={march:3,april:4,may:5,june:6,july:7,august:8};
+  const now=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Shanghai'}));
+  pm = pm.filter(it => {
+    const s=it.slug||it.question||'';
+    const dm=s.match(/(march|april|may|june|july|august)[- ]?(\d+)/i);
+    if(!dm) return true;
+    const deadline=new Date(2026, monthNum[dm[1].toLowerCase()]-1, parseInt(dm[2]));
+    return now <= deadline;
+  });
+  if (!pm.length) { c.innerHTML='<div class="placeholder-text">暂无有效预测</div>'; return; }
   c.innerHTML = pm.map(it => {
     const p = it.probability??0;
     let lb = it.question||it.slug;
