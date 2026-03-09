@@ -18,12 +18,13 @@
     display: flex; justify-content: space-between; align-items: center;
     padding: 14px 24px; background: #1a2332; border-bottom: 1px solid #2a3a4a;
     position: fixed; top: 0; left: 0; right: 0; z-index: 50;
-    transform: translateY(0); transition: transform 0.3s ease;
+    will-change: transform; transform: translateY(0);
+    transition: transform 0.3s cubic-bezier(.4,0,.2,1);
   }
   .header.header-hidden { transform: translateY(-100%); }
   .header h1 { font-size: 18px; color: #fff; white-space: nowrap; }
   .header-right { display: flex; align-items: center; gap: 14px; }
-  .update-time { font-size: 12px; color: #888; }
+  .update-time { font-size: 12px; color: #888; line-height: 1.35; text-align: right; }
   .btn-refresh {
     background: #2563eb; color: #fff; border: none;
     padding: 7px 18px; border-radius: 6px; cursor: pointer; font-size: 13px;
@@ -39,7 +40,7 @@
     .header { padding: 10px 14px; }
     .header h1 { font-size: 16px; }
     .header-right { gap: 10px; }
-    .update-time { font-size: 10px; line-height: 1.3; max-width: 100px; text-align: right; }
+    .update-time { font-size: 10px; line-height: 1.3; }
     .btn-refresh { padding: 6px 12px; font-size: 12px; }
   }
 
@@ -564,13 +565,7 @@ async function refreshData() {
       }
     } catch(e) { console.warn('Analysis failed:', e); }
 
-    const timeStr = new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});
-    if (isCache) {
-      const min = Math.floor(cacheAge/60), sec = cacheAge%60;
-      document.getElementById('updateTime').textContent=`缓存数据 (${min}分${sec}秒前获取)`;
-    } else {
-      document.getElementById('updateTime').textContent='最后更新: '+timeStr;
-    }
+    document.getElementById('updateTime').innerHTML = fmtTime(new Date());
 
     // Step 6: Load history charts in 3 batch requests
     await loadAllHistory();
@@ -578,28 +573,37 @@ async function refreshData() {
   finally { btn.disabled=false; btn.classList.remove('loading'); btn.textContent='刷新数据'; ov.classList.add('hidden'); }
 }
 
+// Format date/time into two-line HTML
+function fmtTime(dateStr) {
+  // dateStr: "2026-03-10 14:30:00" or Date object
+  if (dateStr instanceof Date) {
+    const d = dateStr.toLocaleDateString('zh-CN', {timeZone:'Asia/Shanghai'});
+    const t = dateStr.toLocaleTimeString('zh-CN', {timeZone:'Asia/Shanghai', hour12:false});
+    return d + '<br>' + t;
+  }
+  if (typeof dateStr === 'string' && dateStr.includes(' ')) {
+    const [d, t] = dateStr.split(' ');
+    return d + '<br>' + t;
+  }
+  return dateStr || '--';
+}
+
 // Auto-hide header on scroll
 (()=>{
   const header = document.querySelector('.header');
-  // Add spacer for fixed header
   const spacer = document.createElement('div');
   const updateSpacer = () => { spacer.style.height = header.offsetHeight + 'px'; };
   header.after(spacer);
   updateSpacer();
   window.addEventListener('resize', updateSpacer);
 
-  let lastY = 0, ticking = false;
+  let lastY = window.scrollY;
   window.addEventListener('scroll', () => {
-    if (!ticking) {
-      requestAnimationFrame(() => {
-        const y = window.scrollY;
-        if (y > lastY && y > 60) header.classList.add('header-hidden');
-        else header.classList.remove('header-hidden');
-        lastY = y;
-        ticking = false;
-      });
-      ticking = true;
-    }
+    const y = window.scrollY;
+    if (Math.abs(y - lastY) < 5) return;
+    if (y > lastY && y > 50) header.classList.add('header-hidden');
+    else header.classList.remove('header-hidden');
+    lastY = y;
   }, { passive: true });
 })();
 
@@ -617,7 +621,7 @@ async function refreshData() {
           renderAnalysis(d.analysis);
           try { const ecR = await fetch('/api/ec'); if (ecR.ok) renderEC(await ecR.json()); } catch(e) {}
           await loadAllHistory();
-          document.getElementById('updateTime').textContent='缓存: '+(s.timestamp||'--')+' (北京时间)';
+          document.getElementById('updateTime').innerHTML = fmtTime(s.timestamp);
           loaded = true;
         }
       }
