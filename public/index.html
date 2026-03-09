@@ -499,16 +499,23 @@ async function refreshData() {
 }
 
 (async()=>{
+  let loaded = false;
   try {
     const r = await fetch('/api/latest');
     if (r.ok) {
       const s = await r.json(); const d = s.data||s;
-      if (d.indicators) renderIndicators(d.indicators);
-      renderPolymarket(d.polymarket);
-      renderAnalysis(d.analysis);
-      document.getElementById('updateTime').textContent='缓存: '+(s.timestamp||'--')+' (北京时间)';
+      if (d.indicators && Object.keys(d.indicators).length > 0) {
+        renderIndicators(d.indicators);
+        renderPolymarket(d.polymarket);
+        renderAnalysis(d.analysis);
+        document.getElementById('updateTime').textContent='缓存: '+(s.timestamp||'--')+' (北京时间)';
+        loaded = true;
+      }
     }
   } catch(e) {}
+  if (!loaded) {
+    refreshData();
+  }
 })();
 </script>
 </body>
