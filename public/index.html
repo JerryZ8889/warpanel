@@ -448,35 +448,24 @@ async function loadHistory(key) {
   } catch(e) {}
 }
 
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-let lastRefreshTime = 0;
-
 async function refreshData() {
   const btn = document.getElementById('btnRefresh');
   const ov = document.getElementById('loadingOverlay');
-
-  // 5分钟内使用缓存
-  const elapsed = Date.now() - lastRefreshTime;
-  if (lastRefreshTime && elapsed < CACHE_TTL) {
-    const remain = Math.ceil((CACHE_TTL - elapsed) / 1000);
-    const min = Math.floor(remain / 60);
-    const sec = remain % 60;
-    alert(`数据在 ${min}分${sec}秒 前刚刚刷新，请稍后再试`);
-    return;
-  }
-
   btn.disabled=true; btn.classList.add('loading'); btn.textContent='获取中...';
   ov.classList.remove('hidden');
   try {
     // Step 1: Fetch 5 batches + polymarket in parallel
-    const [b1,b2,b3,b4,b5,pm] = await Promise.all([
-      fetch('/api/batch/1').then(r=>r.json()),
-      fetch('/api/batch/2').then(r=>r.json()),
-      fetch('/api/batch/3').then(r=>r.json()),
-      fetch('/api/batch/4').then(r=>r.json()),
-      fetch('/api/batch/5').then(r=>r.json()),
-      fetch('/api/polymarket').then(r=>r.json()),
+    const results = await Promise.all([
+      fetch('/api/batch/1'),
+      fetch('/api/batch/2'),
+      fetch('/api/batch/3'),
+      fetch('/api/batch/4'),
+      fetch('/api/batch/5'),
+      fetch('/api/polymarket'),
     ]);
+    const isCache = results[0].headers.get('X-Cache') === 'HIT';
+    const cacheAge = results[0].headers.get('X-Cache-Age');
+    const [b1,b2,b3,b4,b5,pm] = await Promise.all(results.map(r=>r.json()));
 
     // Step 2: Merge all indicators
     const allIndicators = {...b1,...b2,...b3,...b4,...b5};
@@ -494,8 +483,13 @@ async function refreshData() {
     const analyzeData = await analyzeResp.json();
     renderAnalysis(analyzeData.analysis);
 
-    lastRefreshTime = Date.now();
-    document.getElementById('updateTime').textContent='最后更新: '+new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});
+    const timeStr = new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});
+    if (isCache) {
+      const min = Math.floor(cacheAge/60), sec = cacheAge%60;
+      document.getElementById('updateTime').textContent=`缓存数据 (${min}分${sec}秒前获取)`;
+    } else {
+      document.getElementById('updateTime').textContent='最后更新: '+timeStr;
+    }
 
     // Step 5: Load history charts in parallel
     const ks = Object.keys(allIndicators).filter(k=>!STOCK_KEYS.includes(k));
