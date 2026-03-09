@@ -260,7 +260,7 @@ GET  /api/history-batch/{1-3}?period=1mo    # 分批获取历史K线（每批约
 - **5分钟内**：直接返回缓存数据，不调用 Yahoo Finance / Polymarket，响应头 `X-Cache: HIT`
 - **超过5分钟**：正常请求外部数据源，存入新快照，响应头 `X-Cache: MISS`
 - 所有用户共享同一缓存，防止多用户同时访问导致数据源限流
-- 前端根据 `X-Cache` 响应头显示 "缓存数据 (X分X秒前获取)" 或 "最后更新: 时间"
+- 前端不区分缓存/实时，统一显示数据时间（日期+时间两行）
 - `/api/latest` 同样检查5分钟有效期，过期返回 `{expired: true}`
 - `/api/analyze` 接收前端合并后的 indicators + polymarket + ec 数据，存入快照供缓存使用
 - 数据库仅保留最近5条快照，自动清理旧数据
@@ -285,6 +285,20 @@ GET  /api/history-batch/{1-3}?period=1mo    # 分批获取历史K线（每批约
 - **分析接口独立容错**: `/api/analyze` 失败不阻断指标渲染，仅分析面板为空
 
 ## 前端布局
+
+### 顶部 Header
+
+- **固定定位** (`position: fixed`)，滚动时自动收起/展开：
+  - 页面向上滑动（scrollY 增加）→ Header 通过 `transform: translateY(-100%)` 平滑收起
+  - 页面向下滑动（scrollY 减少）→ Header 恢复显示
+  - 使用 `will-change: transform` + `cubic-bezier` 缓动提升移动端动画性能
+- Header 下方插入动态 spacer（JS），高度通过 `ResizeObserver` 跟随 header 内容变化自动更新
+- `<meta name="theme-color" content="#1a2332">` 让 Chrome 移动端地址栏与深色背景融合
+- 左侧：看板标题（`white-space: nowrap` 不折行）
+- 右侧：更新时间（两行：日期 + 时间）+ 刷新按钮（`white-space: nowrap` 不折行）
+- **移动端适配** (≤480px)：缩小字体、间距、按钮尺寸；更新时间 10px 确保两行高度与标题平衡
+
+### 内容板块
 
 看板分为以下板块，自上而下：
 
@@ -356,6 +370,5 @@ python main.py
 1. 接入 Claude API 做自然语言分析（替代/增强规则引擎）
 2. 自动定时刷新（可选）
 3. 数据导出 CSV
-4. 移动端适配优化
-5. CDS利差数据（需付费数据源）
-6. 密歇根消费者信心指数（FRED API，月度）
+4. CDS利差数据（需付费数据源）
+5. 密歇根消费者信心指数（FRED API，月度）
